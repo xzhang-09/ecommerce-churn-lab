@@ -1,63 +1,166 @@
-## Telco Churn – End-to-End ML Project
+## E-Commerce Customer Churn Analysis
+
 ### Purpose
 
-Build and ship a full machine-learning solution for predicting customer churn in a telecom setting—from data prep and modeling to an API + web UI deployed on AWS.
+Analyze customer churn patterns in an e-commerce dataset and build a reproducible machine-learning pipeline for churn prediction.
 
-### Problem solved & benefits
+This project is intentionally scoped as a data analysis and modeling project. It focuses on exploratory analysis, data quality checks, feature engineering, model training, experiment tracking, and evaluation.
 
-- Faster decisions: Predicts which customers are likely to churn so teams can act before they leave.
-- Operationalized ML: Model is accessible via a REST API and a simple UI; anyone can test it without notebooks.
-- Repeatable delivery: CI/CD + containers mean every change can be rebuilt, tested, and redeployed in a consistent way.
-- Traceable experiments: MLflow tracks runs, metrics, and artifacts for reproducibility and auditing.
+### Scope Decision
 
-### What I built
+This repository is now optimized for offline analysis rather than online serving. The previous Docker, FastAPI, Gradio, and checked-in serving artifacts have been removed so the project boundary is clearer: produce a reproducible churn model evaluation and business operating threshold, not a production API.
 
-- Data & Modeling: Feature engineering + XGBoost classifier; experiments logged to MLflow.
-- Model tracking: Runs, metrics, and the serialized model logged under a named MLflow experiment.
-- Inference service: FastAPI app exposing /predict (POST) and a root health check /.
-- Web UI: Gradio interface mounted at /ui for quick, shareable manual testing.
-- Containerization: Docker image with uvicorn entrypoint (src.app.main:app) listening on port 8000.
-- CI/CD: GitHub Actions builds the image and pushes to Docker Hub; optionally triggers an ECS service update.
-- Orchestration: AWS ECS Fargate runs the container (serverless).
-- Networking: Application Load Balancer (ALB) on HTTP:80 forwarding to a Target Group (IP targets on HTTP:8000).
-- Security: Security groups scoped to allow ALB inbound 80 from the internet, and task inbound 8000 from the ALB SG.
-- Observability: CloudWatch Logs for container stdout/stderr and ECS service events.
+Production deployment would still require a serving interface, CI/CD, monitoring, model registry promotion rules, and a tested batch or real-time inference path.
 
-### Deployment flow (high-level)
+### What This Project Covers
 
-- Push to main → GitHub Actions builds the Docker image and pushes it to Docker Hub.
-- ECS service is updated (manually or via the workflow) to force a new deployment.
-- ALB health checks hit / on port 8000; once healthy, traffic is routed to the new task.
-- Users call POST /predict or open the Gradio UI at /ui via the ALB DNS.
+- Exploratory data analysis in `notebooks/EDA.ipynb`
+- Raw data loading from Excel or CSV files
+- Data validation with Great Expectations
+- Preprocessing for missing values (missingness indicators + leakage-free median imputation), duplicate records, and inconsistent category labels
+- Feature engineering for categorical and numeric fields
+- Fair, cross-validated RandomForest / LightGBM / XGBoost comparison (all at default configs, ranked by 5-fold CV PR-AUC with early stopping)
+- Early stopping for the boosting models, so the tree count is chosen from data rather than hardcoded
+- Optional Optuna tuning for the final boosting model (XGBoost or LightGBM, each with its own regularization-focused search space; default objective: PR-AUC)
+- Leakage-free evaluation: stratified train/validation/test split, with the decision threshold selected on validation and the test set scored only once
+- Cost-aware threshold selection: by default the threshold minimizes the FN/FP business cost (a missed churner costs `--fn_fp_ratio`x a false alarm, default 10:1)
+- MLflow experiment tracking for parameters, metrics, and model artifacts
 
-### Roadblocks & how we solved them
+### Project Structure
 
-Unhealthy targets behind ALB
+```text
+.
+├── data/
+│   ├── raw/                 # Raw dataset, ignored by git
+│   └── processed/           # Processed outputs, ignored by git
+├── notebooks/
+│   └── EDA.ipynb            # Exploratory analysis
+├── scripts/
+│   ├── prepare_processed_data.py
+│   ├── run_pipeline.py
+│   ├── test_pipeline_phase1_data_features.py
+│   └── test_pipeline_phase2_modeling.py
+├── src/
+│   ├── data/
+│   ├── features/
+│   ├── models/
+│   └── utils/
+├── requirements.txt
+└── README.md
+```
 
-- Cause: App didn’t respond at the health-check path; listener/target port mismatches.
-- Fixes: Added GET / health endpoint; confirmed ALB listener on 80 forwards to TG on 8000; TG health check path set to /.
+### Setup
 
-Module import error in container (ModuleNotFoundError: serving)
+Recommended Python version: 3.11.
 
-- Cause: Python path in the image didn’t include src/.
-- Fixes: Set PYTHONPATH=/app/src in the Dockerfile; corrected uvicorn app path to src.app.main:app.
+Create and activate a virtual environment:
 
-ALB DNS timing out
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
-- Cause: Security group rules not aligned with traffic flow.
-- Fixes: ALB SG allows inbound 80 from 0.0.0.0/0; task SG allows inbound 8000 from the ALB SG; outbound open.
+Install dependencies:
 
-ECS redeploy not picking up the new image
+```bash
+python -m pip install -r requirements.txt
+```
 
-- Cause: Service still running previous task definition.
-- Fixes: Force new deployment (CLI or console) after pushing the new image; optional step added to CI.
+### Data
 
-Gradio UI error (“No runs found in experiment”)
+Place the raw dataset at:
 
-- Cause: Inference/UI expected an MLflow-logged model but couldn’t resolve a run.
-- Fixes: Standardized MLflow experiment name and model logging in training; inference loads the logged model consistently (and a local path for dev).
+```text
+data/raw/E Commerce Dataset.xlsx
+```
 
-Local testing vs. prod paths
+The loader uses the `E Comm` sheet when it exists; otherwise it falls back to the first Excel sheet.
 
-- Cause: MLflow artifact URIs differ locally vs. in container.
-- Fixes: For local dev, load via direct ./mlruns/.../artifacts/model; in prod, container loads the packaged model path used at build time.
+### Run The Analysis Pipeline
+
+Run the full training and evaluation pipeline:
+
+```bash
+python scripts/run_pipeline.py \
+  --input "data/raw/E Commerce Dataset.xlsx" \
+  --target Churn
+```
+
+Run a fair, cross-validated model comparison (5-fold CV PR-AUC, early stopping per fold) and then train a selected final model:
+
+```bash
+python scripts/run_pipeline.py \
+  --input "data/raw/E Commerce Dataset.xlsx" \
+  --target Churn \
+  --compare_models \
+  --model lightgbm
+```
+
+If Great Expectations is not installed and you only want a quick local modeling run:
+
+```bash
+python scripts/run_pipeline.py \
+  --input "data/raw/E Commerce Dataset.xlsx" \
+  --target Churn \
+  --skip_validation
+```
+
+Run with Optuna tuning (works for `--model xgboost` or `--model lightgbm`):
+
+```bash
+python scripts/run_pipeline.py \
+  --input "data/raw/E Commerce Dataset.xlsx" \
+  --target Churn \
+  --model lightgbm \
+  --tune \
+  --tune_metric average_precision \
+  --tune_trials 30
+```
+
+### Outputs
+
+The pipeline writes:
+
+- Cleaned data to `data/processed/ecommerce_churn_cleaned.csv`
+- Model-ready feature data to `data/processed/ecommerce_churn_features.csv`
+- Feature metadata to `artifacts/`
+- Reusable categorical encoding metadata to `artifacts/feature_schema.json`
+- Model comparison results to `artifacts/model_comparison.csv` when `--compare_models` is used
+- MLflow runs to `mlruns/`
+- Evaluation metrics including precision, recall, F1, ROC AUC, PR AUC, the FN/FP business cost, and probability-calibration diagnostics (Brier score, ECE) — plus confusion-matrix counts and 5-fold CV stability
+
+View local MLflow runs:
+
+```bash
+mlflow ui --backend-store-uri file:./mlruns
+```
+
+### Notes
+
+- `data/`, `artifacts/`, and `mlruns/` are treated as generated local artifacts.
+- The project no longer includes Docker, cloud deployment, FastAPI, or Gradio components.
+- The model is evaluated as an offline analysis artifact, not as a production service.
+
+### Reading The Results
+
+The model comparison should be read as an empirical ranking under the current data split, features, and default model settings. In the current saved comparison, LightGBM has the highest CV PR-AUC, but the top three models are close enough that the result should be described as "LightGBM is slightly ahead in this run" rather than "LightGBM is definitively best."
+
+PR-AUC is the primary ranking metric because churn is imbalanced: in the processed feature table, churners are a minority class. ROC AUC is still reported, but it can look strong even when precision is weak.
+
+### Business Interpretation
+
+The default threshold objective treats a missed churner as 10 times more expensive than a false alarm:
+
+```text
+business_cost = 10 * false_negatives + false_positives
+```
+
+This is a simple decision model for retention targeting. A lower threshold catches more likely churners but contacts more customers who would not have churned. A higher threshold reduces unnecessary outreach but misses more churners. Change `--fn_fp_ratio` when the retention offer cost, customer lifetime value, or intervention success rate differs from the default assumption.
+
+For a real retention program, the next step is to replace this simple FN/FP ratio with expected value:
+
+```text
+expected_value = churn_probability * expected_margin_saved * intervention_success_rate - offer_cost
+```
+
+That would turn the model from "who is likely to churn" into "who is worth contacting."
