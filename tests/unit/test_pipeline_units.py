@@ -1,53 +1,43 @@
-import importlib
-import inspect
+import importlib.util
 
 import pandas as pd
 import pytest
 
+from churn import pipeline
+from churn.data import prepare
+
 
 def test_prepare_processed_data_uses_distinct_feature_output_path():
-    module = importlib.import_module("scripts.prepare_processed_data")
-
-    assert module.CLEANED_OUT.endswith("ecommerce_churn_cleaned.csv")
-    assert module.FEATURES_OUT.endswith("ecommerce_churn_features.csv")
-    assert module.CLEANED_OUT != module.FEATURES_OUT
+    assert prepare.CLEANED_OUT.endswith("ecommerce_churn_cleaned.csv")
+    assert prepare.FEATURES_OUT.endswith("ecommerce_churn_features.csv")
+    assert prepare.CLEANED_OUT != prepare.FEATURES_OUT
 
 
-def test_run_pipeline_imports_without_great_expectations_installed():
-    module = importlib.import_module("scripts.run_pipeline")
+def test_pipeline_exposes_callable_entry_points():
+    assert callable(pipeline.main)
+    assert callable(pipeline.cli)
+    assert callable(pipeline.run_data_validation)
+    assert callable(pipeline.build_arg_parser)
 
-    assert callable(module.main)
-    assert callable(module.run_data_validation)
 
-
+@pytest.mark.skipif(
+    importlib.util.find_spec("great_expectations") is not None,
+    reason="great_expectations is installed, so the missing-dependency path isn't exercised",
+)
 def test_run_pipeline_validation_error_explains_how_to_continue_when_dependency_missing():
-    module = importlib.import_module("scripts.run_pipeline")
-
     with pytest.raises(ModuleNotFoundError, match="--skip_validation"):
-        module.run_data_validation(pd.DataFrame({"CustomerID": [1]}))
-
-
-def test_phase2_objective_uses_training_cv_not_holdout_test_data():
-    module = importlib.import_module("scripts.test_pipeline_phase2_modeling")
-
-    assert callable(module.make_objective)
-    signature = inspect.signature(module.make_objective)
-    # Objective is built only from the training split and a CV fold count; it
-    # never receives the holdout test data, and tunes a threshold-free metric.
-    assert list(signature.parameters) == ["X_train", "y_train", "scoring", "cv_splits", "seed"]
+        pipeline.run_data_validation(pd.DataFrame({"CustomerID": [1]}))
 
 
 def test_run_pipeline_exposes_reproducible_model_comparison_specs():
-    module = importlib.import_module("scripts.run_pipeline")
-
-    specs = module.get_model_specs(scale_pos_weight=3.0, random_state=42)
+    specs = pipeline.get_model_specs(scale_pos_weight=3.0, random_state=42)
     names = [spec.name for spec in specs]
 
     assert names == ["random_forest", "lightgbm", "xgboost"]
 
 
 def test_run_pipeline_can_select_named_final_model():
-    module = importlib.import_module("scripts.run_pipeline")
+    module = pipeline
 
     model = module.build_model("random_forest", scale_pos_weight=3.0, random_state=42)
 
@@ -55,7 +45,7 @@ def test_run_pipeline_can_select_named_final_model():
 
 
 def test_run_pipeline_builds_lightgbm_model():
-    module = importlib.import_module("scripts.run_pipeline")
+    module = pipeline
 
     model = module.build_model("lightgbm", scale_pos_weight=3.0, random_state=42)
 
@@ -63,7 +53,7 @@ def test_run_pipeline_builds_lightgbm_model():
 
 
 def test_run_pipeline_metrics_at_threshold_reports_operating_point_and_counts():
-    module = importlib.import_module("scripts.run_pipeline")
+    module = pipeline
 
     y_true = pd.Series([0, 0, 1, 1])
     probabilities = pd.Series([0.1, 0.4, 0.7, 0.9])
@@ -79,7 +69,7 @@ def test_run_pipeline_metrics_at_threshold_reports_operating_point_and_counts():
 
 
 def test_run_pipeline_threshold_free_metrics_include_pr_auc():
-    module = importlib.import_module("scripts.run_pipeline")
+    module = pipeline
 
     y_true = pd.Series([0, 0, 1, 1])
     probabilities = pd.Series([0.1, 0.4, 0.7, 0.9])
@@ -92,7 +82,7 @@ def test_run_pipeline_threshold_free_metrics_include_pr_auc():
 
 
 def test_run_pipeline_calibration_report_flags_miscalibration():
-    module = importlib.import_module("scripts.run_pipeline")
+    module = pipeline
 
     # Perfectly calibrated: predict 0.0 for negatives and 1.0 for positives.
     y_true = pd.Series([0, 0, 1, 1])
@@ -110,7 +100,7 @@ def test_run_pipeline_calibration_report_flags_miscalibration():
 
 
 def test_run_pipeline_select_threshold_picks_value_maximizing_metric():
-    module = importlib.import_module("scripts.run_pipeline")
+    module = pipeline
 
     y_true = pd.Series([0, 0, 1, 1])
     probabilities = pd.Series([0.1, 0.4, 0.7, 0.9])

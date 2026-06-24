@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecommerce-churn"
+version = "0.1.0"
+description = "Offline e-commerce customer churn analysis and modeling pipeline."
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+# Single source of truth for runtime deps; keeps requirements.txt authoritative.
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+churn-pipeline = "churn.pipeline:cli"
+churn-prepare = "churn.data.prepare:main"
+
+[tool.pytest.ini_options]
+# Make the src-layout package importable for tests even before `pip install -e .`,
+# and keep test discovery scoped to tests/.
+pythonpath = ["src"]
+testpaths = ["tests"]

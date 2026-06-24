@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.features.build_features import apply_feature_schema, build_feature_schema
+from churn.features.build_features import apply_feature_schema, build_feature_schema
 
 
 def test_feature_schema_reuses_training_columns_for_unseen_categories():

@@ -2,10 +2,10 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
-from scripts.run_pipeline import metrics_at_threshold, select_threshold, threshold_free_metrics
-from src.data.load_data import load_data
-from src.data.preprocess import impute_numeric, preprocess_data
-from src.features.build_features import apply_feature_schema, build_feature_schema
+from churn.pipeline import metrics_at_threshold, select_threshold, threshold_free_metrics
+from churn.data.load_data import load_data
+from churn.data.preprocess import impute_numeric, preprocess_data
+from churn.features.build_features import apply_feature_schema, build_feature_schema
 
 
 def test_lightweight_pipeline_smoke_runs_from_raw_csv_to_metrics(tmp_path):
