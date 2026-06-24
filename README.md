@@ -1,16 +1,10 @@
-## E-Commerce Customer Churn Analysis
+# E-Commerce Customer Churn Analysis
 
 ### Purpose
 
-Analyze customer churn patterns in an e-commerce dataset and build a reproducible machine-learning pipeline for churn prediction.
+Analyze customer churn in an e-commerce dataset (~5,000 customers, ~17% churn after dedup) and build a reproducible, leakage-free pipeline that produces a churn model, a calibrated risk score, and a business operating threshold.
 
-This project is intentionally scoped as a data analysis and modeling project. It focuses on exploratory analysis, data quality checks, feature engineering, model training, experiment tracking, and evaluation.
-
-### Scope Decision
-
-This repository is now optimized for offline analysis rather than online serving. The previous Docker, FastAPI, Gradio, and checked-in serving artifacts have been removed so the project boundary is clearer: produce a reproducible churn model evaluation and business operating threshold, not a production API.
-
-Production deployment would still require a serving interface, CI/CD, monitoring, model registry promotion rules, and a tested batch or real-time inference path.
+The project is intentionally scoped to **offline analysis and modeling** — EDA, data quality checks, feature engineering, training, experiment tracking, and evaluation. It is not an online service: Docker, FastAPI, Gradio, and serving artifacts have been deliberately removed to keep the boundary clear. Productionizing it would still require a serving interface, CI/CD, monitoring, model-registry promotion rules, and a tested batch/real-time inference path.
 
 ### What This Project Covers
 
@@ -88,7 +82,8 @@ The loader uses the `E Comm` sheet when it exists; otherwise it falls back to th
 
 ### Run The Analysis Pipeline
 
-Run the full training and evaluation pipeline:
+Run the full training and evaluation pipeline (after `pip install -e .` the
+`churn-pipeline` console script is an exact equivalent of `python scripts/run_pipeline.py`):
 
 ```bash
 python scripts/run_pipeline.py \
@@ -129,16 +124,18 @@ python scripts/run_pipeline.py \
 
 ### Outputs
 
-The pipeline writes:
+`run_pipeline.py` (`churn-pipeline`) writes:
 
 - Cleaned data to `data/processed/ecommerce_churn_cleaned.csv`
-- Model-ready feature data to `data/processed/ecommerce_churn_features.csv`
-- Feature metadata to `artifacts/`
-- Reusable categorical encoding metadata to `artifacts/feature_schema.json`
+- Feature/encoding metadata to `artifacts/` (`feature_columns.json`, `feature_schema.json`, `preprocessing.pkl`)
 - Permutation feature importance to `artifacts/feature_importance.csv`
-- Model comparison results to `artifacts/model_comparison.csv` when `--compare_models` is used
-- MLflow runs to `mlruns/`
-- Evaluation metrics including precision, recall, F1, ROC AUC, PR AUC, the FN/FP business cost, and probability-calibration diagnostics (Brier score, ECE) — plus confusion-matrix counts and 5-fold CV stability
+- Model comparison results to `artifacts/model_comparison.csv` (only with `--compare_models`)
+- MLflow runs to `mlruns/`: parameters, the trained (calibrated) model, the selected threshold, and metrics — precision, recall, F1, ROC AUC, PR AUC, the FN/FP business cost, calibration diagnostics (Brier, ECE on test and out-of-fold), confusion-matrix counts, and 5-fold CV stability
+
+`prepare_processed_data.py` (`churn-prepare`) is a separate data-prep step that writes both the cleaned table and the model-ready feature matrix:
+
+- `data/processed/ecommerce_churn_cleaned.csv`
+- `data/processed/ecommerce_churn_features.csv`
 
 View local MLflow runs:
 
@@ -146,17 +143,26 @@ View local MLflow runs:
 mlflow ui --backend-store-uri file:./mlruns
 ```
 
+### Testing
+
+```bash
+python -m compileall src scripts
+python -m pytest -q
+```
+
+Tests live under `tests/unit/` (fast unit tests) and `tests/integration/` (an
+end-to-end smoke test on synthetic data, no Excel required).
+
 ### Notes
 
-- `data/`, `artifacts/`, and `mlruns/` are treated as generated local artifacts.
-- The project no longer includes Docker, cloud deployment, FastAPI, or Gradio components.
-- The model is evaluated as an offline analysis artifact, not as a production service.
+- `data/`, `artifacts/`, and `mlruns/` are generated locally and are git-ignored.
+- Outputs resolve relative to the current working directory, so run the pipeline from the repo root.
 
 ### Reading The Results
 
-The model comparison should be read as an empirical ranking under the current data split, features, and default model settings. In the current saved comparison, LightGBM has the highest CV PR-AUC, but the top three models are close enough that the result should be described as "LightGBM is slightly ahead in this run" rather than "LightGBM is definitively best."
+The model comparison is an empirical ranking under the current data split, features, and default model settings — read the latest numbers from `artifacts/model_comparison.csv` rather than a hardcoded winner. The candidates typically land within roughly one CV standard deviation of each other, so close ranks should be read as ties ("slightly ahead in this run"), not a definitive best model.
 
-PR-AUC is the primary ranking metric because churn is imbalanced: in the processed feature table, churners are a minority class. ROC AUC is still reported, but it can look strong even when precision is weak.
+PR-AUC is the primary ranking metric because churn is imbalanced (~17% positives): it is sensitive to precision on the minority class, whereas ROC AUC can look strong even when precision is weak.
 
 ### Business Interpretation
 
