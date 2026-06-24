@@ -12,6 +12,15 @@ __pycache__/
 *.py[cod]
 *.pyo
 
+# Packaging / editable install
+*.egg-info/
+build/
+dist/
+
+# Notebook checkpoints and stray notebook-local MLflow runs
+.ipynb_checkpoints/
+notebooks/mlruns/
+
 # App/runtime outputs
 .gradio/
 flagged/
