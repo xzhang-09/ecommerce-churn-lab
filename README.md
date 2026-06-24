@@ -22,8 +22,10 @@ Production deployment would still require a serving interface, CI/CD, monitoring
 - Fair, cross-validated RandomForest / LightGBM / XGBoost comparison (all at default configs, ranked by 5-fold CV PR-AUC with early stopping)
 - Early stopping for the boosting models, so the tree count is chosen from data rather than hardcoded
 - Optional Optuna tuning for the final boosting model (XGBoost or LightGBM, each with its own regularization-focused search space; default objective: PR-AUC)
-- Leakage-free evaluation: stratified train/validation/test split, with the decision threshold selected on validation and the test set scored only once
+- Leakage-free evaluation: stratified train/validation/test split, with the decision threshold selected on out-of-fold CV predictions and the test set scored only once
 - Cost-aware threshold selection: by default the threshold minimizes the FN/FP business cost (a missed churner costs `--fn_fp_ratio`x a false alarm, default 10:1)
+- Post-hoc probability calibration (`--calibrate`, default isotonic) so the final probabilities are trustworthy for expected-value targeting, with Brier/ECE reported on test and out-of-fold
+- Model-agnostic permutation feature importance (PR-AUC drop) saved to `artifacts/feature_importance.csv`
 - MLflow experiment tracking for parameters, metrics, and model artifacts
 
 ### Project Structure
@@ -35,16 +37,20 @@ Production deployment would still require a serving interface, CI/CD, monitoring
 │   └── processed/           # Processed outputs, ignored by git
 ├── notebooks/
 │   └── EDA.ipynb            # Exploratory analysis
-├── scripts/
+├── scripts/                 # Thin CLI wrappers around the churn package
 │   ├── prepare_processed_data.py
-│   ├── run_pipeline.py
-│   ├── test_pipeline_phase1_data_features.py
-│   └── test_pipeline_phase2_modeling.py
+│   └── run_pipeline.py
 ├── src/
-│   ├── data/
-│   ├── features/
-│   ├── models/
-│   └── utils/
+│   └── churn/               # Installable package (src-layout)
+│       ├── data/            # load_data, preprocess, prepare
+│       ├── features/        # build_features
+│       ├── models/          # tune
+│       ├── validation/      # validate_data (Great Expectations)
+│       └── pipeline.py      # end-to-end modeling pipeline
+├── tests/
+│   ├── unit/                # fast unit tests
+│   └── integration/         # end-to-end smoke test
+├── pyproject.toml
 ├── requirements.txt
 └── README.md
 ```
@@ -60,11 +66,15 @@ python -m venv .venv
 source .venv/bin/activate
 ```
 
-Install dependencies:
+Install dependencies and the `churn` package (editable, src-layout):
 
 ```bash
 python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
+
+The editable install makes `import churn...` and the `churn-pipeline` / `churn-prepare`
+console scripts work from anywhere — no `sys.path` manipulation required.
 
 ### Data
 
@@ -125,6 +135,7 @@ The pipeline writes:
 - Model-ready feature data to `data/processed/ecommerce_churn_features.csv`
 - Feature metadata to `artifacts/`
 - Reusable categorical encoding metadata to `artifacts/feature_schema.json`
+- Permutation feature importance to `artifacts/feature_importance.csv`
 - Model comparison results to `artifacts/model_comparison.csv` when `--compare_models` is used
 - MLflow runs to `mlruns/`
 - Evaluation metrics including precision, recall, F1, ROC AUC, PR AUC, the FN/FP business cost, and probability-calibration diagnostics (Brier score, ECE) — plus confusion-matrix counts and 5-fold CV stability
@@ -163,4 +174,4 @@ For a real retention program, the next step is to replace this simple FN/FP rati
 expected_value = churn_probability * expected_margin_saved * intervention_success_rate - offer_cost
 ```
 
-That would turn the model from "who is likely to churn" into "who is worth contacting."
+That would turn the model from "who is likely to churn" into "who is worth contacting." Because the pipeline now calibrates `churn_probability` (default isotonic, verified by the reported Brier/ECE), it can be plugged into this expected-value formula directly rather than being treated as a bare ranking score.
