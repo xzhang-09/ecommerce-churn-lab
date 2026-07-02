@@ -1,5 +1,7 @@
-import great_expectations as gx
+import logging
 from typing import Tuple, List
+
+logger = logging.getLogger(__name__)
 
 
 # === Validation rules (edit/version these in one place) ===
@@ -42,7 +44,9 @@ def validate_ecommerce_data(df) -> Tuple[bool, List[str]]:
     `ge.dataset.PandasDataset` one-liner API used in older GX versions was
     removed in 1.x.
     """
-    print("🔍 Starting data validation with Great Expectations...")
+    import great_expectations as gx
+
+    logger.info("🔍 Starting data validation with Great Expectations...")
 
     context = gx.get_context(mode="ephemeral")
     data_source = context.data_sources.add_pandas("ecommerce_pandas_datasource")
@@ -53,19 +57,19 @@ def validate_ecommerce_data(df) -> Tuple[bool, List[str]]:
     expectations = []
 
     # === SCHEMA VALIDATION - ESSENTIAL COLUMNS ===
-    print("   📋 Validating schema and required columns...")
+    logger.info("   📋 Validating schema and required columns...")
     for column in REQUIRED_COLUMNS:
         expectations.append(gx.expectations.ExpectColumnToExist(column=column))
 
     # === BUSINESS LOGIC VALIDATION ===
-    print("   💼 Validating business logic constraints...")
+    logger.info("   💼 Validating business logic constraints...")
     for column, value_set in CATEGORICAL_VALUE_SETS.items():
         expectations.append(
             gx.expectations.ExpectColumnValuesToBeInSet(column=column, value_set=value_set)
         )
 
     # === NUMERIC RANGE VALIDATION ===
-    print("   📊 Validating numeric ranges and business constraints...")
+    logger.info("   📊 Validating numeric ranges and business constraints...")
     for column, (min_value, max_value, mostly) in NUMERIC_RANGES.items():
         kwargs = {"column": column, "min_value": min_value, "max_value": max_value}
         if mostly is not None:
@@ -77,7 +81,7 @@ def validate_ecommerce_data(df) -> Tuple[bool, List[str]]:
         expectations.append(gx.expectations.ExpectColumnValuesToNotBeNull(column=column))
 
     # === RUN VALIDATION SUITE ===
-    print("   ⚙️  Running complete validation suite...")
+    logger.info("   ⚙️  Running complete validation suite...")
     results = [batch.validate(expectation) for expectation in expectations]
 
     # === PROCESS RESULTS ===
@@ -91,9 +95,9 @@ def validate_ecommerce_data(df) -> Tuple[bool, List[str]]:
     success = failed_checks == 0
 
     if success:
-        print(f"✅ Data validation PASSED: {passed_checks}/{total_checks} checks successful")
+        logger.info(f"✅ Data validation PASSED: {passed_checks}/{total_checks} checks successful")
     else:
-        print(f"❌ Data validation FAILED: {failed_checks}/{total_checks} checks failed")
-        print(f"   Failed expectations: {failed_expectations}")
+        logger.info(f"❌ Data validation FAILED: {failed_checks}/{total_checks} checks failed")
+        logger.info(f"   Failed expectations: {failed_expectations}")
 
     return success, failed_expectations

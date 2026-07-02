@@ -4,7 +4,7 @@
 
 Analyze customer churn in an e-commerce dataset (~5,000 customers, ~17% churn after dedup) and build a reproducible, leakage-free pipeline that produces a churn model, a calibrated risk score, and a business operating threshold.
 
-The project is intentionally scoped to **offline analysis and modeling** — EDA, data quality checks, feature engineering, training, experiment tracking, and evaluation. It is not an online service: Docker, FastAPI, Gradio, and serving artifacts have been deliberately removed to keep the boundary clear. Productionizing it would still require a serving interface, CI/CD, monitoring, model-registry promotion rules, and a tested batch/real-time inference path.
+The project is intentionally scoped to **offline analysis and modeling** — EDA, data quality checks, feature engineering, training, experiment tracking, evaluation, and offline batch scoring. It is not an online service: Docker, FastAPI, Gradio, and serving artifacts have been deliberately removed to keep the boundary clear. Test/lint CI runs on every push (`.github/workflows/ci.yml`). Productionizing it further would still require a real-time serving interface, monitoring, model-registry promotion rules, and a tested real-time inference path.
 
 ### What This Project Covers
 
@@ -21,6 +21,7 @@ The project is intentionally scoped to **offline analysis and modeling** — EDA
 - Post-hoc probability calibration (`--calibrate`, default isotonic) so the final probabilities are trustworthy for expected-value targeting, with Brier/ECE reported on test and out-of-fold
 - Model-agnostic permutation feature importance (PR-AUC drop) saved to `artifacts/feature_importance.csv`
 - MLflow experiment tracking for parameters, metrics, and model artifacts
+- Offline batch scoring (`churn-score`) that turns a trained run into a ranked customer contact list, reusing the exact training-time preprocessing
 
 ### Project Structure
 
@@ -31,21 +32,25 @@ The project is intentionally scoped to **offline analysis and modeling** — EDA
 │   └── processed/           # Processed outputs, ignored by git
 ├── notebooks/
 │   └── EDA.ipynb            # Exploratory analysis
+├── .github/workflows/       # CI: compileall + pytest on every push
 ├── scripts/                 # Thin CLI wrappers around the churn package
 │   ├── prepare_processed_data.py
-│   └── run_pipeline.py
+│   ├── run_pipeline.py
+│   └── score_customers.py
 ├── src/
 │   └── churn/               # Installable package (src-layout)
 │       ├── data/            # load_data, preprocess, prepare
-│       ├── features/        # build_features
-│       ├── models/          # tune
+│       ├── features/        # build_features (feature schema fit/apply)
+│       ├── models/          # estimators, evaluate, training, compare, tune, score
 │       ├── validation/      # validate_data (Great Expectations)
-│       └── pipeline.py      # end-to-end modeling pipeline
+│       ├── logging_utils.py # package logging setup
+│       └── pipeline.py      # orchestration (stages + CLI)
 ├── tests/
 │   ├── unit/                # fast unit tests
-│   └── integration/         # end-to-end smoke test
+│   ├── integration/         # smoke test + full pipeline.main run
+│   ├── test_project_structure.py  # package layout / import checks
+│   └── test_notebook_scope.py     # notebook scope guardrail
 ├── pyproject.toml
-├── requirements.txt
 └── README.md
 ```
 
@@ -63,12 +68,15 @@ source .venv/bin/activate
 Install dependencies and the `churn` package (editable, src-layout):
 
 ```bash
-python -m pip install -r requirements.txt
 python -m pip install -e .
+# For development or CI, add the dev extras (pytest + notebook/EDA tooling):
+python -m pip install -e ".[dev]"
 ```
 
-The editable install makes `import churn...` and the `churn-pipeline` / `churn-prepare`
-console scripts work from anywhere — no `sys.path` manipulation required.
+The editable install makes `import churn...` and the `churn-pipeline` / `churn-prepare` /
+`churn-score` console scripts work from anywhere — no `sys.path` manipulation required.
+Runtime dependencies live in `[project]`; test and notebook tooling is in the `dev`
+optional-dependencies group so a plain install stays lean.
 
 ### Data
 
@@ -127,10 +135,10 @@ python scripts/run_pipeline.py \
 `run_pipeline.py` (`churn-pipeline`) writes:
 
 - Cleaned data to `data/processed/ecommerce_churn_cleaned.csv`
-- Feature/encoding metadata to `artifacts/` (`feature_columns.json`, `feature_schema.json`, `preprocessing.pkl`)
+- Feature/encoding metadata to `artifacts/` (`feature_columns.json`, `feature_schema.json`, and `preprocessing.pkl` — the complete leakage-free preprocessing state: feature columns, categorical schema, and the training-fit imputation medians)
 - Permutation feature importance to `artifacts/feature_importance.csv`
 - Model comparison results to `artifacts/model_comparison.csv` (only with `--compare_models`)
-- MLflow runs to `mlruns/`: parameters, the trained (calibrated) model, the selected threshold, and metrics — precision, recall, F1, ROC AUC, PR AUC, the FN/FP business cost, calibration diagnostics (Brier, ECE on test and out-of-fold), confusion-matrix counts, and 5-fold CV stability
+- MLflow runs to `mlruns/`: parameters, the trained (calibrated) model, the selected threshold, the training-fit imputation medians (`imputation_medians.json`), and metrics — precision, recall, F1, ROC AUC, PR AUC, the FN/FP business cost, calibration diagnostics (Brier, ECE on test and out-of-fold), confusion-matrix counts, and 5-fold CV stability
 
 `prepare_processed_data.py` (`churn-prepare`) is a separate data-prep step that writes both the cleaned table and the model-ready feature matrix:
 
@@ -143,6 +151,25 @@ View local MLflow runs:
 mlflow ui --backend-store-uri file:./mlruns
 ```
 
+### Score New Customers
+
+Once a model is trained, score a fresh batch of customers into a ranked contact list:
+
+```bash
+python scripts/score_customers.py \
+  --input "data/raw/new_customers.xlsx" \
+  --output data/processed/churn_scores.csv
+```
+
+`score_customers.py` (`churn-score`) loads the model, the leakage-free preprocessing
+state (`preprocessing.pkl`), and the selected decision threshold from a **single MLflow
+run** — the latest by default, or `--run-id <id>` for a specific one. Loading all three
+from the same run guarantees they are a matched set (no model-from-one-run /
+threshold-from-another mismatch). The new batch is transformed exactly as in training
+(category aliases, missing-value indicators, the fitted feature schema, and the
+*training* imputation medians), then written one row per customer as
+`(id, churn_probability, churn_prediction)`, sorted highest-risk first.
+
 ### Testing
 
 ```bash
@@ -150,8 +177,10 @@ python -m compileall src scripts
 python -m pytest -q
 ```
 
-Tests live under `tests/unit/` (fast unit tests) and `tests/integration/` (an
-end-to-end smoke test on synthetic data, no Excel required).
+Tests live under `tests/unit/` (fast unit tests) and `tests/integration/` (a
+lightweight smoke test plus a full `pipeline.main` run, both on synthetic data —
+no Excel required). The same checks run in CI on every push and pull request via
+`.github/workflows/ci.yml`.
 
 ### Notes
 

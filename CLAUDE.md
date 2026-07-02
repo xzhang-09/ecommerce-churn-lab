@@ -14,16 +14,19 @@ This repository is scoped as an offline e-commerce customer churn analysis and m
 # Recommended Python version: 3.11
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-# Install the `churn` package itself (editable, src-layout). This makes
+# Install dependencies and the `churn` package itself (editable, src-layout). This makes
 # `import churn...` and the console scripts work without any sys.path hacks.
 python -m pip install -e .
+# For development/CI add the dev extras (pytest + notebook/EDA tooling):
+python -m pip install -e ".[dev]"
 ```
 
 The code lives in an installable `churn` package under `src/` (src-layout). After
-`pip install -e .` two console scripts are available: `churn-pipeline` (the modeling
-pipeline) and `churn-prepare` (processed-data prep). The `scripts/*.py` files are
-thin wrappers kept for the documented `python scripts/...` invocations.
+`pip install -e .` three console scripts are available: `churn-pipeline` (the modeling
+pipeline), `churn-prepare` (processed-data prep), and `churn-score` (batch scoring of a
+new customer file). The `scripts/*.py` files are thin wrappers kept for the documented
+`python scripts/...` invocations. Runtime dependencies live in `[project]`; test and
+notebook tooling is in the `dev` optional-dependencies group.
 
 ### Analysis Pipeline
 
@@ -47,6 +50,20 @@ python scripts/prepare_processed_data.py        # or: churn-prepare
 The pipeline can also be invoked as a console script after `pip install -e .`,
 e.g. `churn-pipeline --input "data/raw/E Commerce Dataset.xlsx" --target Churn`.
 
+### Batch Scoring
+
+```bash
+# Score a batch of new customers with a trained model. Loads the model,
+# preprocessing state, and threshold from a single MLflow run (defaults to the
+# latest run), so the three are always a matched set.
+python scripts/score_customers.py --input "data/raw/new_customers.xlsx" --output data/processed/churn_scores.csv
+# or, against a specific run:
+churn-score --input "data/raw/new_customers.xlsx" --run-id <mlflow_run_id>
+```
+
+The output is one row per customer (id, `churn_probability`, `churn_prediction`),
+sorted highest-risk first, for retention targeting.
+
 ### Verification
 
 ```bash
@@ -55,7 +72,9 @@ python -m pytest -q
 ```
 
 Tests live under `tests/` (`tests/unit/` for fast unit tests, `tests/integration/`
-for the end-to-end smoke test). The former `scripts/test_pipeline_phase{1,2}_*.py`
+for the end-to-end smoke test plus a full `pipeline.main` run on synthetic data).
+CI runs the same `compileall` + `pytest` on every push via
+`.github/workflows/ci.yml`. The former `scripts/test_pipeline_phase{1,2}_*.py`
 manual-check scripts were removed — their coverage is now in the pytest suites and
 the reproducible pipeline itself.
 
@@ -88,9 +107,15 @@ The three-way split and validation-based threshold selection matter for evaluati
 - `src/churn/data/prepare.py`: creates processed data without running model training.
 - `src/churn/features/build_features.py`: creates model-ready features.
 - `src/churn/validation/validate_data.py`: validates the raw dataset with Great Expectations (rules are module-level constants at the top of the file).
+- `src/churn/models/estimators.py`: candidate model definitions (`ModelSpec`, `get_model_specs`, `build_model`).
+- `src/churn/models/evaluate.py`: pure metrics, threshold selection (`select_threshold`), and calibration diagnostics (`calibration_report`) — no MLflow/pipeline deps.
+- `src/churn/models/training.py`: fitting helpers (`fit_with_early_stopping`, `calibrate_prefit`, `predict_positive_probability`) and the cross-validated out-of-fold pass (`cross_val_oof`).
+- `src/churn/models/compare.py`: the fair, cross-validated model comparison (`compare_models`).
 - `src/churn/models/tune.py`: runs Optuna hyperparameter tuning for XGBoost or LightGBM (model-specific search spaces; `build_tuned_estimator` rebuilds the tuned model).
-- `src/churn/pipeline.py`: primary reproducible modeling pipeline (library form; `build_arg_parser`/`cli`/`main`).
-- `scripts/run_pipeline.py`, `scripts/prepare_processed_data.py`: thin CLI wrappers around the package.
+- `src/churn/models/score.py`: batch scoring of a new customer file (`score_dataframe` is the pure transform; `load_run_artifacts` pulls the model/preprocessing/threshold from one MLflow run; `main` is the `churn-score` CLI).
+- `src/churn/pipeline.py`: orchestration layer (`main` runs the stages; `build_arg_parser`/`cli`). Re-exports the functions above from `churn.pipeline` for backward compatibility, so `churn.pipeline.select_threshold` etc. still resolve.
+- `src/churn/logging_utils.py`: `configure_logging()` — attaches a plain-message handler to the `churn` logger; CLI entry points call it so progress messages reach the console. Library modules just use `logging.getLogger(__name__)`.
+- `scripts/run_pipeline.py`, `scripts/prepare_processed_data.py`, `scripts/score_customers.py`: thin CLI wrappers around the package.
 
 ### MLflow
 
@@ -111,6 +136,7 @@ mlflow ui --backend-store-uri file:./mlruns
 - `data/processed/ecommerce_churn_features.csv`: model-ready feature matrix, including the target column.
 - `artifacts/model_comparison.csv`: cross-validated model comparison (CV PR-AUC/ROC-AUC mean ± std plus out-of-fold precision/recall/f1/`oof_cost`) when `--compare_models` is used.
 - `artifacts/feature_importance.csv`: model-agnostic permutation importance (mean/std PR-AUC drop on the test split), ranked descending.
+- `data/processed/churn_scores.csv`: default output of `churn-score` — one row per scored customer (id, `churn_probability`, `churn_prediction`), ranked highest-risk first.
 
 ## Repository Hygiene
 

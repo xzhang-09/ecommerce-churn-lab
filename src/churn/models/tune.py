@@ -1,13 +1,17 @@
+import logging
+
 import optuna
 from optuna.samplers import TPESampler
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
 from sklearn.model_selection import cross_val_score
 
+logger = logging.getLogger(__name__)
+
 
 def _suggest_params(trial, model_type: str):
     """Per-model Optuna search space. Both spaces include explicit regularization
-    because the dataset is small (~4k rows after dedup) and over-fitting control
+    because the dataset is small (~5k rows after dedup) and over-fitting control
     matters more than chasing raw capacity."""
     if model_type == "xgboost":
         return {
@@ -90,6 +94,6 @@ def tune_model(X, y, model_type: str = "xgboost", scoring: str = "average_precis
     study = optuna.create_study(direction="maximize", sampler=TPESampler(seed=random_state))
     study.optimize(objective, n_trials=n_trials)
 
-    print(f"Best Params ({model_type}):", study.best_params)
-    print(f"Best {scoring}:", study.best_value)
+    logger.info(f"Best Params ({model_type}): {study.best_params}")
+    logger.info(f"Best {scoring}: {study.best_value}")
     return study.best_params

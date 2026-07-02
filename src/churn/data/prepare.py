@@ -1,8 +1,12 @@
+import logging
 import os
 
 from churn.data.load_data import load_data
 from churn.data.preprocess import preprocess_data, impute_numeric
 from churn.features.build_features import apply_feature_schema, build_feature_schema
+from churn.logging_utils import configure_logging
+
+logger = logging.getLogger(__name__)
 
 RAW = "data/raw/E Commerce Dataset.xlsx"
 CLEANED_OUT = "data/processed/ecommerce_churn_cleaned.csv"
@@ -10,6 +14,7 @@ FEATURES_OUT = "data/processed/ecommerce_churn_features.csv"
 
 
 def main(raw_path: str = RAW, cleaned_out: str = CLEANED_OUT, features_out: str = FEATURES_OUT) -> None:
+    configure_logging()
     # 1) load raw
     df = load_data(raw_path)
 
@@ -32,14 +37,14 @@ def main(raw_path: str = RAW, cleaned_out: str = CLEANED_OUT, features_out: str 
     # 4) save cleaned data separately from model-ready features
     os.makedirs(os.path.dirname(cleaned_out), exist_ok=True)
     df.to_csv(cleaned_out, index=False)
-    print(f"✅ Cleaned dataset saved to {cleaned_out} | Shape: {df.shape}")
+    logger.info(f"✅ Cleaned dataset saved to {cleaned_out} | Shape: {df.shape}")
 
     # 5) features
     feature_schema = build_feature_schema(df, target_col="Churn")
     df_features = apply_feature_schema(df, feature_schema)
     os.makedirs(os.path.dirname(features_out), exist_ok=True)
     df_features.to_csv(features_out, index=False)
-    print(f"✅ Feature dataset saved to {features_out} | Shape: {df_features.shape}")
+    logger.info(f"✅ Feature dataset saved to {features_out} | Shape: {df_features.shape}")
 
 
 if __name__ == "__main__":

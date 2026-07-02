@@ -8,11 +8,29 @@ version = "0.1.0"
 description = "Offline e-commerce customer churn analysis and modeling pipeline."
 readme = "README.md"
 requires-python = ">=3.11"
-dynamic = ["dependencies"]
+dependencies = [
+    "great_expectations==1.5.8",
+    "joblib==1.4.2",
+    "lightgbm==4.6.0",
+    "mlflow==2.14.1",
+    "numpy==1.26.4",
+    "openpyxl==3.1.5",
+    "optuna==4.4.0",
+    "pandas==2.1.4",
+    "scikit-learn==1.5.2",
+    "xgboost==3.0.3",
+]
 
-[tool.setuptools.dynamic]
-# Single source of truth for runtime deps; keeps requirements.txt authoritative.
-dependencies = { file = ["requirements.txt"] }
+[project.optional-dependencies]
+# Test + notebook/EDA tooling — not needed to run the modeling pipeline itself.
+# Install with `pip install -e ".[dev]"` for development and CI.
+dev = [
+    "pytest==8.3.2",
+    "jupyter==1.1.1",
+    "ipykernel==6.30.1",
+    "matplotlib==3.10.5",
+    "seaborn==0.13.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -20,6 +38,7 @@ where = ["src"]
 [project.scripts]
 churn-pipeline = "churn.pipeline:cli"
 churn-prepare = "churn.data.prepare:main"
+churn-score = "churn.models.score:main"
 
 [tool.pytest.ini_options]
 # Make the src-layout package importable for tests even before `pip install -e .`,

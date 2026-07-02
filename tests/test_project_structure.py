@@ -5,10 +5,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_deployment_components_are_removed():
+    # Guards against the *serving* infrastructure creeping back (the project is
+    # scoped to offline analysis). Note: `.github` is intentionally NOT here —
+    # CI is offline tooling, not a serving component, so it is allowed.
     removed_paths = [
         "dockerfile",
         ".dockerignore",
-        ".github",
         "src/app",
         "src/serving",
         "scripts/test_fastapi.py",
@@ -43,12 +45,15 @@ def test_packaged_under_src_layout():
 def test_core_analysis_modules_import():
     from churn.data.load_data import load_data
     from churn.data.preprocess import preprocess_data
-    from churn.features.build_features import build_features
+    from churn.features.build_features import apply_feature_schema, build_feature_schema
+    from churn.models.score import score_dataframe
     from churn.models.tune import tune_model
-    from churn.validation.validate_data import validate_ecommerce_data
+    from churn.validation import validate_data
 
     assert callable(load_data)
     assert callable(preprocess_data)
-    assert callable(build_features)
+    assert callable(build_feature_schema)
+    assert callable(apply_feature_schema)
+    assert callable(score_dataframe)
     assert callable(tune_model)
-    assert callable(validate_ecommerce_data)
+    assert callable(validate_data.validate_ecommerce_data)

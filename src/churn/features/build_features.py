@@ -1,3 +1,5 @@
+import warnings
+
 import pandas as pd
 
 
@@ -16,24 +18,6 @@ def _binary_mapping_for_series(s: pd.Series) -> dict | None:
         return {sorted_vals[0]: 0, sorted_vals[1]: 1}
 
     return None
-
-
-def _map_binary_series(s: pd.Series) -> pd.Series:
-    """
-    Apply deterministic binary encoding to 2-category features.
-    
-    This function implements the core binary encoding logic that converts
-    categorical features with exactly 2 values into 0/1 integers. The mappings
-    are deterministic so repeated analysis runs produce the same encoded values.
-
-    """
-    mapping = _binary_mapping_for_series(s)
-    if mapping is not None:
-        return s.astype(str).map(mapping).astype("Int64")
-
-    # === NON-BINARY FEATURES ===
-    # Return unchanged - will be handled by one-hot encoding
-    return s
 
 
 def build_feature_schema(df: pd.DataFrame, target_col: str = "Churn") -> dict:
@@ -80,7 +64,21 @@ def apply_feature_schema(df: pd.DataFrame, schema: dict) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = 0
         else:
-            df[col] = df[col].astype(str).map(mapping).fillna(0).astype(int)
+            col_str = df[col].astype(str)
+            mapped = col_str.map(mapping)
+            # A non-null value that isn't a mapping key would be silently coerced
+            # to 0 by the fillna below, quietly turning it into the negative class.
+            # That masks upstream schema drift (e.g. "Yes"/"No" becoming "Y"/"N"),
+            # so surface it instead of letting the column degrade unnoticed.
+            unseen = sorted(set(col_str[mapped.isna() & df[col].notna()].unique()))
+            if unseen:
+                warnings.warn(
+                    f"Column '{col}': values {unseen} were not seen when the feature "
+                    f"schema was fit (known: {sorted(mapping)}); encoding them as 0. "
+                    "This usually means the input schema changed upstream.",
+                    stacklevel=2,
+                )
+            df[col] = mapped.fillna(0).astype(int)
 
     bool_cols = df.select_dtypes(include=["bool"]).columns.tolist()
     if bool_cols:
@@ -105,42 +103,4 @@ def apply_feature_schema(df: pd.DataFrame, schema: dict) -> pd.DataFrame:
             ordered_columns = [target_col] + ordered_columns
         df = df.reindex(columns=ordered_columns, fill_value=0)
 
-    return df
-
-
-def build_features(df: pd.DataFrame, target_col: str = "Churn") -> pd.DataFrame:
-    """
-    Apply complete feature engineering pipeline for training data.
-    
-    This is the main feature engineering function that transforms raw customer data
-    into ML-ready features for offline model training and evaluation.
-
-    """
-    df = df.copy()
-    print(f"🔧 Starting feature engineering on {df.shape[1]} columns...")
-
-    # === STEP 1: Identify Feature Types ===
-    # Find categorical columns (object dtype) excluding the target variable
-    obj_cols = [c for c in df.select_dtypes(include=["object"]).columns if c != target_col]
-    numeric_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
-    
-    print(f"   📊 Found {len(obj_cols)} categorical and {len(numeric_cols)} numeric columns")
-
-    # === STEP 2: Split Categorical by Cardinality ===
-    # Binary features (exactly 2 unique values) get binary encoding
-    # Multi-category features (>2 unique values) get one-hot encoding
-    binary_cols = [c for c in obj_cols if df[c].dropna().nunique() == 2]
-    multi_cols = [c for c in obj_cols if df[c].dropna().nunique() > 2]
-    
-    print(f"   🔢 Binary features: {len(binary_cols)} | Multi-category features: {len(multi_cols)}")
-    if binary_cols:
-        print(f"      Binary: {binary_cols}")
-    if multi_cols:
-        print(f"      Multi-category: {multi_cols}")
-
-    # === STEP 3: Fit and apply reusable schema ===
-    schema = build_feature_schema(df, target_col=target_col)
-    df = apply_feature_schema(df, schema)
-
-    print(f"✅ Feature engineering complete: {df.shape[1]} final features")
     return df

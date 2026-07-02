@@ -110,3 +110,29 @@ def test_run_pipeline_select_threshold_picks_value_maximizing_metric():
     # A clean cut exists between the two classes, so perfect F1 is achievable.
     assert value == 1.0
     assert 0.4 < threshold <= 0.7
+
+
+def test_run_pipeline_fits_feature_schema_without_test_only_categories():
+    rows = []
+    for i in range(80):
+        rows.append(
+            {
+                "Churn": i % 2,
+                "PreferredPaymentMode": ["Credit Card", "Debit Card", "UPI"][i % 3],
+                "Tenure": float(i % 12),
+            }
+        )
+    df = pd.DataFrame(rows)
+    df.loc[3, "PreferredPaymentMode"] = "Crypto"
+
+    prepared = pipeline.prepare_model_splits(
+        df,
+        target="Churn",
+        test_size=0.25,
+        val_size=0.25,
+        random_state=42,
+    )
+
+    categories = prepared.feature_schema["multi_categories"]["PreferredPaymentMode"]
+    assert "Crypto" not in categories
+    assert "PreferredPaymentMode_Crypto" not in prepared.feature_cols

@@ -1,7 +1,14 @@
+import logging
+import warnings
+
 import pandas as pd
 
+logger = logging.getLogger(__name__)
 
-def preprocess_data(df: pd.DataFrame, target_col: str = "Churn") -> pd.DataFrame:
+
+def preprocess_data(
+    df: pd.DataFrame, target_col: str = "Churn", drop_duplicates: bool = True
+) -> pd.DataFrame:
     """
     Basic cleaning for the e-commerce churn dataset.
     - trim column names
@@ -9,6 +16,11 @@ def preprocess_data(df: pd.DataFrame, target_col: str = "Churn") -> pd.DataFrame
     - map target Churn to 0/1 if needed
     - simple NA handling
     - drop exact duplicate rows
+
+    `drop_duplicates` controls the deduplication step. It must stay True for
+    training (see the note below — duplicate rows leak across the split), but
+    scoring a batch of new customers passes False so no customer row is silently
+    dropped from the output.
     """
     # tidy headers
     df.columns = df.columns.str.strip()  # Remove leading/trailing whitespace
@@ -57,11 +69,12 @@ def preprocess_data(df: pd.DataFrame, target_col: str = "Churn") -> pd.DataFrame
     # untuned XGBoost was hitting recall=1.0 / ROC AUC=0.998 (17% of the test
     # set turned out to be duplicates of training rows). Must dedupe before
     # the split, not after, or this leakage comes right back.
-    n_before = len(df)
-    df = df.drop_duplicates().reset_index(drop=True)
-    n_dropped = n_before - len(df)
-    if n_dropped:
-        print(f"🧹 Dropped {n_dropped} exact duplicate rows ({n_dropped / n_before:.1%}) to prevent train/test leakage")
+    if drop_duplicates:
+        n_before = len(df)
+        df = df.drop_duplicates().reset_index(drop=True)
+        n_dropped = n_before - len(df)
+        if n_dropped:
+            logger.info(f"🧹 Dropped {n_dropped} exact duplicate rows ({n_dropped / n_before:.1%}) to prevent train/test leakage")
 
     return df
 
@@ -86,5 +99,14 @@ def impute_numeric(df: pd.DataFrame, medians: "pd.Series | None" = None):
         medians = df[num_cols].median()
     df[num_cols] = df[num_cols].fillna(medians)
     # Guard against a column that was entirely NaN (median undefined) -> fill 0.
+    # Filling with 0 silently invents a value, so warn: an all-NaN column is
+    # almost always a data problem worth investigating rather than papering over.
+    residual = [c for c in num_cols if df[c].isna().any()]
+    if residual:
+        warnings.warn(
+            f"Numeric columns {residual} still contain NaN after median imputation "
+            "(median undefined, e.g. an all-NaN column); filling those gaps with 0.",
+            stacklevel=2,
+        )
     df[num_cols] = df[num_cols].fillna(0)
     return df, medians
