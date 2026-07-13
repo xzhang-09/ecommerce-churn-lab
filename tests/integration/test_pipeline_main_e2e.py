@@ -61,6 +61,13 @@ def test_pipeline_main_runs_end_to_end_and_writes_artifacts(tmp_path, monkeypatc
     assert (tmp_path / "artifacts" / "feature_columns.json").exists()
     assert (tmp_path / "artifacts" / "feature_importance.csv").exists()
 
+    # The pipeline renders the committed Markdown results report the README links to.
+    results_md = tmp_path / "docs" / "RESULTS.md"
+    assert results_md.exists()
+    report_text = results_md.read_text()
+    assert "Held-out test results" in report_text
+    assert "Test PR-AUC" in report_text
+
     bundle_path = tmp_path / "artifacts" / "preprocessing.pkl"
     assert bundle_path.exists()
     bundle = joblib.load(bundle_path)

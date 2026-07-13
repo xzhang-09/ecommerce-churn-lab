@@ -54,6 +54,11 @@ from churn.models.training import (
     predict_positive_probability,
 )
 from churn.models.compare import compare_models
+from churn.models.report import (
+    default_timestamp,
+    git_commit_short,
+    render_results_markdown,
+)
 
 __all__ = [
     "ModelSpec", "get_model_specs", "build_model",
@@ -346,9 +351,12 @@ def _select_final_threshold(args, y_true, oof_proba) -> float:
 
 def _evaluate_and_log(args, inference_model, prepared: PreparedModelSplits,
                       threshold: float, oof_proba, train_time: float,
-                      artifacts_dir: str) -> None:
+                      artifacts_dir: str) -> dict:
     """STAGE 7 — evaluate once on the untouched test split, compute calibration
-    and permutation importance, and log everything (incl. the model) to MLflow."""
+    and permutation importance, and log everything (incl. the model) to MLflow.
+
+    Returns a dict of the held-out results so the caller can render a committed
+    Markdown report (see ``churn.models.report``)."""
     X_test, y_test = prepared.X_test, prepared.y_test
     y_trainval_pos = prepared.y_trainval.reset_index(drop=True)
 
@@ -436,6 +444,33 @@ def _evaluate_and_log(args, inference_model, prepared: PreparedModelSplits,
     logger.info("\n📈 Detailed Classification Report:")
     logger.info("\n" + classification_report(y_test, y_pred, digits=3))
 
+    return {
+        "ranking": ranking,
+        "operating": operating,
+        "threshold": threshold,
+        "fn_fp_ratio": args.fn_fp_ratio,
+        "test_cost": test_cost,
+        "brier": brier, "ece": ece,
+        "brier_oof": brier_oof, "ece_oof": ece_oof,
+        "importance": importance,
+        "test_rows": int(len(y_test)),
+        "test_pos": int((y_test == 1).sum()),
+        "test_neg": int((y_test == 0).sum()),
+    }
+
+
+def _write_results_report(results: dict, project_root: str) -> None:
+    """STAGE 8 — render the held-out results to ``docs/RESULTS.md`` (committed,
+    so the README can link to it) and also log it as an MLflow artifact."""
+    markdown = render_results_markdown(results)
+    docs_dir = os.path.join(project_root, "docs")
+    os.makedirs(docs_dir, exist_ok=True)
+    report_path = os.path.join(docs_dir, "RESULTS.md")
+    with open(report_path, "w") as f:
+        f.write(markdown)
+    mlflow.log_text(markdown, artifact_file="RESULTS.md")
+    logger.info(f"📝 Wrote results report to {report_path}")
+
 
 def main(args):
     """Orchestrate the complete ML workflow as a sequence of stages, all logged
@@ -449,7 +484,9 @@ def main(args):
 
         # STAGE 1-2: load + validate + preprocess
         df = _load_and_validate(args)
+        raw_rows = int(len(df))
         df = _preprocess_and_persist(df, project_root)
+        clean_rows = int(len(df))
 
         # STAGE 3-4: split, fit reusable preprocessing state, persist it
         logger.info("🛠️  Building features and splitting (train / validation / test)...")
@@ -471,6 +508,7 @@ def main(args):
         scale_pos_weight = (prepared.y_train == 0).sum() / (prepared.y_train == 1).sum()
         logger.info(f"📈 Class imbalance ratio: {scale_pos_weight:.2f} (applied to positive class)")
 
+        comparison = None
         if args.compare_models:
             comparison = compare_models(
                 prepared.X_trainval, prepared.y_trainval,
@@ -509,8 +547,25 @@ def main(args):
         # STAGE 6-7: threshold selection + final evaluation
         y_trainval_pos = prepared.y_trainval.reset_index(drop=True)
         threshold = _select_final_threshold(args, y_trainval_pos, oof_proba)
-        _evaluate_and_log(args, inference_model, prepared, threshold,
-                          oof_proba, train_time, artifacts_dir)
+        results = _evaluate_and_log(args, inference_model, prepared, threshold,
+                                    oof_proba, train_time, artifacts_dir)
+
+        # STAGE 8: render the committed Markdown results report the README links to.
+        results.update({
+            "model": args.model,
+            "run_id": run_id,
+            "git_commit": git_commit_short(project_root),
+            "timestamp": default_timestamp(),
+            "dataset": {
+                "raw_rows": raw_rows,
+                "clean_rows": clean_rows,
+                "churn_rate": float((df[target] == 1).mean()),
+                "target": target,
+            },
+            "cv_stats": cv_stats,
+            "comparison": comparison,
+        })
+        _write_results_report(results, project_root)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

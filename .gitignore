@@ -21,9 +21,9 @@ dist/
 .ipynb_checkpoints/
 notebooks/mlruns/
 
-# App/runtime outputs
-.gradio/
-flagged/
+# Local tool/cache directories
+.matplotlib-cache/
+.claude/
 
 # Big artifacts we don't want in git
 mlruns/
